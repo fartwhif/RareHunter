@@ -10,7 +10,8 @@ namespace RareHunter
     {
         public SortedDictionary<string, RareItem> rareCount = new SortedDictionary<string, RareItem>();
 
-        public string[] tiers = { @"Adherent's Crystal
+        public string[] tiers = { @"Ulgrim's Scroll
+                                    ,Adherent's Crystal
                                     ,Alchemist's Crystal
                                     ,Artificer's Crystal
                                     ,Artist's Crystal
