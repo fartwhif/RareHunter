@@ -8,6 +8,10 @@ using System.Text.RegularExpressions;
 using System.Collections.Generic;
 using System.Timers;
 using System.Net;
+using System.Windows.Forms;
+using System.Linq;
+using System.IO;
+using System.Diagnostics;
 
 /*
  * Created by Mag-nus. 8/19/2011, VVS added by Virindi-Inquisitor.
@@ -102,7 +106,8 @@ namespace RareHunter
 
         public HudCheckBox showAllCB { get; private set; }
 
-        readonly Timer timer = new Timer();
+        readonly System.Timers.Timer timer = new System.Timers.Timer();
+        private System.Windows.Forms.Timer itemCheckTimer = null;
         public TimeSpan timeSpan = new TimeSpan(0, 0, 0);
         public double updateRate = 100;
 
@@ -118,12 +123,12 @@ namespace RareHunter
         /// This is called when the plugin is started up. This happens only once.
         /// </summary>
         protected override void Startup()
-		{
-			try
-			{
-				// This initializes our static Globals class with references to the key objects your plugin will use, Host and Core.
-				// The OOP way would be to pass Host and Core to your objects, but this is easier.
-				Globals.Init("RareHunter", Host, Core);
+        {
+            try
+            {
+                // This initializes our static Globals class with references to the key objects your plugin will use, Host and Core.
+                // The OOP way would be to pass Host and Core to your objects, but this is easier.
+                Globals.Init("RareHunter", Host, Core);
 
                 CoreManager.Current.ChatBoxMessage += new EventHandler<ChatTextInterceptEventArgs>(Current_ChatBoxMessage);
                 timer.Interval = updateRate;
@@ -141,9 +146,74 @@ namespace RareHunter
 
                 EmailSender = new Email(email.Text, host.Text, int.Parse(port.Text), ss1.Checked, pass.Text);
                 DiscordSender = new Discord(discordurl.Text);
+
+
+                itemCheckTimer = new System.Windows.Forms.Timer
+                {
+                    Interval = 5000
+                };
+                itemCheckTimer.Tick += ItemCheckTimer_Tick;
+                itemCheckTimer.Enabled = false;
+                itemCheckTimer.Start();
             }
-			catch (Exception ex) { Util.LogError(ex); }
-		}
+            catch (Exception ex) { Util.LogError(ex); }
+        }
+        public class Item
+        {
+            public int ItemId { get; set; }
+            public string ItemName { get; set; }
+        }
+        public List<Item> GetAllMyItems()
+        {
+            List<WorldObject> targetContainers = new List<WorldObject>();
+            WorldObjectCollection myItems = Core.WorldFilter.GetByOwner(Core.CharacterFilter.Id);
+            List<Item> items = new List<Item>();
+            foreach (WorldObject item in myItems)
+            {
+                items.Add(new Item()
+                {
+                    ItemId = item.Id,
+                    ItemName = item.Name
+                });
+            }
+            return items;
+        }
+        private void ItemCheckTimer_Tick(object sender, EventArgs e)
+        {
+            bool first = (Items.Count == 0);
+            var newAllItemsList = GetAllMyItems();
+            List<Item> newItems = new List<Item>();
+
+            foreach (var item in newAllItemsList)
+            {
+                if (Items.FirstOrDefault(k => k.ItemId == item.ItemId) == null)
+                {
+                    newItems.Add(item);
+                }
+            }
+            if (newItems.Count > 0)
+            {
+                SortedDictionary<string, RareItem> _rares = (first) ? null : rl.getList();
+                foreach (var item in newItems)
+                {
+                    Items.Add(item);
+                    if (!first)
+                    {
+                        var g = _rares.Count(k => k.Value.name == item.ItemName);
+                        if (g > 0)
+                        {
+                            raresValue++;
+                            rares.Text = raresValue + "";
+                            int killstoObtain = killValue - killssincelast;
+                            killssincelast = killValue;
+                            rl.rareCount[item.ItemName].count += 1;
+                            rareFound(item.ItemName, Core.CharacterFilter.Name, killstoObtain);
+                        }
+                    }
+                }
+            }
+        }
+        List<Item> Items = new List<Item>();
 
         private void UpdateTime(object sender, ElapsedEventArgs e)
         {
@@ -188,62 +258,67 @@ namespace RareHunter
 
                             rareName = match.Groups["rarename"].Value;
 
-                            if (!addingToList)
-                            {
-                                addingToList = true;
-                                HudList.HudListRowAccessor testRow = raresFound.InsertRow(0);
-                                ((HudStaticText)testRow[0]).Text = raresFound.RowCount + "";
-                                ((HudStaticText)testRow[1]).Text = rareName;
-                                ((HudStaticText)testRow[2]).Text = killstoObtain + "";
-                                ((HudStaticText)testRow[3]).Text = DateTime.Now.ToShortTimeString();
-                                ((HudStaticText)testRow[4]).Text = DateTime.Today.ToString("MM/dd/yy");
-
-                                string[] export = new string[raresFound.RowCount];
-                                int count = 0;
-                                for (int i = raresFound.RowCount - 1; i >= 0; i--)
-                                {
-                                    export[count] = ((HudStaticText)raresFound[i][0]).Text + "," + ((HudStaticText)raresFound[i][1]).Text + "," + ((HudStaticText)raresFound[i][2]).Text + "," + ((HudStaticText)raresFound[i][3]).Text + "," + ((HudStaticText)raresFound[i][4]).Text;
-                                    count++;
-                                }
-
-                                Util.ExportCSV(export, false);
-
-                                addingToList = false;
-                            }
-
-                            if (rareName != "" && tierActive(rareName.Replace('!', ' ').Trim()))
-                            {
-                                //IF FOUND RARE : SEND EMAIL
-                                if (SendEmail && !emailSending)
-                                {
-                                    emailSending = true;
-                                    EmailSender.sendEmail("NEW RARE! " + rareName, Core.CharacterFilter.Name + " has discovered the " + rareName);
-                                }
-
-                                //IF FOUND RARE : SEND DISCORD
-                                if (SendDiscord && !discordSending)
-                                {
-                                    discordSending = true;
-                                    DiscordSender.sendMsg(Core.CharacterFilter.Name + " has discovered the " + rareName);
-                                }
-                            }
+                            rareFound(rareName, playerName, killstoObtain);
                             break;
                         }
                     }
                 }
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 Util.WriteToChat("x Error: " + ex.Message + "\n " + ex.Source + "\n " + ex.StackTrace);
             }
-            
+
+        }
+
+        private void rareFound(string rareName, string playerName, int killstoObtain)
+        {
+            if (!addingToList)
+            {
+                addingToList = true;
+                HudList.HudListRowAccessor testRow = raresFound.InsertRow(0);
+                ((HudStaticText)testRow[0]).Text = raresFound.RowCount + "";
+                ((HudStaticText)testRow[1]).Text = rareName;
+                ((HudStaticText)testRow[2]).Text = killstoObtain + "";
+                ((HudStaticText)testRow[3]).Text = DateTime.Now.ToShortTimeString();
+                ((HudStaticText)testRow[4]).Text = DateTime.Today.ToString("MM/dd/yy");
+
+                string[] export = new string[raresFound.RowCount];
+                int count = 0;
+                for (int i = raresFound.RowCount - 1; i >= 0; i--)
+                {
+                    export[count] = ((HudStaticText)raresFound[i][0]).Text + "," + ((HudStaticText)raresFound[i][1]).Text + "," + ((HudStaticText)raresFound[i][2]).Text + "," + ((HudStaticText)raresFound[i][3]).Text + "," + ((HudStaticText)raresFound[i][4]).Text;
+                    count++;
+                }
+
+                Util.ExportCSV(export, false);
+
+                addingToList = false;
+            }
+
+            if (rareName != "" && tierActive(rareName.Replace('!', ' ').Trim()))
+            {
+                //IF FOUND RARE : SEND EMAIL
+                if (SendEmail && !emailSending)
+                {
+                    emailSending = true;
+                    EmailSender.sendEmail("NEW RARE! " + rareName, Core.CharacterFilter.Name + " has discovered the " + rareName);
+                }
+
+                //IF FOUND RARE : SEND DISCORD
+                if (SendDiscord && !discordSending)
+                {
+                    discordSending = true;
+                    DiscordSender.sendMsg(Core.CharacterFilter.Name + " has discovered the " + rareName);
+                }
+            }
         }
 
         private bool tierActive(string name)
         {
-            if(rl.rareCount.ContainsKey(name))
+            if (rl.rareCount.ContainsKey(name))
             {
-                switch(rl.rareCount[name].tier)
+                switch (rl.rareCount[name].tier)
                 {
                     case 1:
                         return tier1cb.Checked;
@@ -358,7 +433,7 @@ namespace RareHunter
         {
             string[] export = new string[raresFound.RowCount];
             int count = 0;
-            for(int i = raresFound.RowCount - 1; i >= 0; i--)
+            for (int i = raresFound.RowCount - 1; i >= 0; i--)
             {
                 export[count] = ((HudStaticText)raresFound[i][0]).Text + "," + ((HudStaticText)raresFound[i][1]).Text + "," + ((HudStaticText)raresFound[i][2]).Text + "," + ((HudStaticText)raresFound[i][3]).Text + "," + ((HudStaticText)raresFound[i][4]).Text;
                 count++;
@@ -399,7 +474,7 @@ namespace RareHunter
 
         private void SendEmailChanged(object sender, EventArgs e)
         {
-            if(sendemail.Checked)
+            if (sendemail.Checked)
             {
                 SendEmail = true;
                 sendemail.Checked = true;
@@ -421,12 +496,12 @@ namespace RareHunter
                 port.UserChangeable = false;
                 ss1.UserChangeable = false;
             }
-           
+
         }
 
         private void SendDiscordHookChanged(object sender, EventArgs e)
         {
-            if(discordwebhook.Checked)
+            if (discordwebhook.Checked)
             {
                 SendDiscord = true;
                 discordurl.UserChangeable = true;
@@ -438,7 +513,7 @@ namespace RareHunter
             }
         }
 
-            private void ResetStats(object sender, EventArgs e)
+        private void ResetStats(object sender, EventArgs e)
         {
             timeSpan = TimeSpan.Zero;
             killValue = 0;
@@ -461,13 +536,13 @@ namespace RareHunter
             string temp = "";
             if (timeSpan.Duration().Days < 1)
             {
-               temp  = String.Format("{0}h, {1}m, {2}s", timeSpan.Duration().Hours, timeSpan.Duration().Minutes, timeSpan.Duration().Seconds) + " at a rate of " + (int)(killValue / timeSpan.Duration().TotalHours) + " / hour and discovered " + raresValue + " rares!";
+                temp = String.Format("{0}h, {1}m, {2}s", timeSpan.Duration().Hours, timeSpan.Duration().Minutes, timeSpan.Duration().Seconds) + " at a rate of " + (int)(killValue / timeSpan.Duration().TotalHours) + " / hour and discovered " + raresValue + " rares!";
             }
             else
             {
                 temp = String.Format("{0}d, {1}h, {2}m, {3}s", timeSpan.Duration().Days, timeSpan.Duration().Hours, timeSpan.Duration().Minutes, timeSpan.Duration().Seconds) + " at a rate of " + (int)(killValue / timeSpan.Duration().TotalHours) + " / hour and discovered " + raresValue + " rares!";
             }
-           
+
             Util.WriteToChat("You have killed " + killValue + " creatures in " + temp);
         }
 
@@ -510,21 +585,24 @@ namespace RareHunter
         /// This is called when the plugin is shut down. This happens only once.
         /// </summary>
         protected override void Shutdown()
-		{
-			try
-			{
+        {
+            try
+            {
+                Items.Clear();
+                itemCheckTimer.Stop();
                 timer.Stop();
                 //Destroy the view.
                 MVWireupHelper.WireupEnd(this);
-			}
-			catch (Exception ex) { Util.LogError(ex); }
-		}
+            }
+            catch (Exception ex) { Util.LogError(ex); }
+        }
 
-		[BaseEvent("LoginComplete", "CharacterFilter")]
-		private void CharacterFilter_LoginComplete(object sender, EventArgs e)
-		{
-			try
-			{
+        [BaseEvent("LoginComplete", "CharacterFilter")]
+        private void CharacterFilter_LoginComplete(object sender, EventArgs e)
+        {
+            //Core.CharacterFilter.Logoff += new EventHandler<LogoffEventArgs>(CharacterFilter_Logoff);
+            try
+            {
                 string[] keys = new string[rl.getList().Count];
                 rl.getList().Keys.CopyTo(keys, 0);
                 for (int i = 0; i < rl.rareCount.Count; i++)
@@ -544,7 +622,7 @@ namespace RareHunter
                         }
                         else
                         {
-                            if(wo.Name.Equals("Pack"))
+                            if (wo.Name.Equals("Pack"))
                             {
                                 if (wo.Values(LongValueKey.RareId) != 0)
                                     rl.rareCount[wo.Name].count += 1;
@@ -561,8 +639,8 @@ namespace RareHunter
                 updateList(false);
                 loadCSV();
             }
-			catch (Exception ex) { Util.LogError(ex); }
-		}
+            catch (Exception ex) { Util.LogError(ex); }
+        }
 
         private void loadCSV()
         {
@@ -610,7 +688,7 @@ namespace RareHunter
             }
 
             int count = 0;
-            foreach(KeyValuePair<string, RareItem> entry in rl.getList())
+            foreach (KeyValuePair<string, RareItem> entry in rl.getList())
             {
                 count += entry.Value.count;
             }
@@ -624,7 +702,7 @@ namespace RareHunter
         {
             try
             {
-
+                Items.Clear();
             }
             catch (Exception ex) { Util.LogError(ex); }
         }
@@ -714,7 +792,7 @@ namespace RareHunter
             raresFound.AddColumn(typeof(HudStaticText), 45, "date");
             totalRares.AddColumn(typeof(HudStaticText), 250, "name");
             totalRares.AddColumn(typeof(HudStaticText), 20, "qty");
-            
+
         }
-	}
+    }
 }

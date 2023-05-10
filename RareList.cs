@@ -10,8 +10,7 @@ namespace RareHunter
     {
         public SortedDictionary<string, RareItem> rareCount = new SortedDictionary<string, RareItem>();
 
-        public string[] tiers = { @"Ulgrim's Scroll
-                                    ,Adherent's Crystal
+        public string[] tiers = { @"Adherent's Crystal
                                     ,Alchemist's Crystal
                                     ,Artificer's Crystal
                                     ,Artist's Crystal
@@ -309,7 +308,8 @@ namespace RareHunter
                                     ,Wand of the Frore Crystal
                                     ,Wings of Rakhil
                                     ,Zefir's Breath
-                                    ,Zharalim Crookblade"
+                                    ,Zharalim Crookblade
+                                    ,Ulgrim's Scroll"
 
         };
 
